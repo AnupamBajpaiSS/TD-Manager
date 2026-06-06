@@ -1,475 +1,422 @@
 import { useState, useEffect, useCallback } from "react";
 
 const API_URL = "https://script.google.com/macros/s/AKfycbyEGck3zAtam3muyRwGoLwiK2zxT3mT3PG_ZpRNtbKRkWmV9DhrgYN5cW-ZbWVKM6Y/exec";
-const STATUS = { FREE:"FREE", BLOCKED:"BLOCKED", OUT:"OUT" };
-const HOURS = Array.from({length:13},(_,i)=>`${(i+9).toString().padStart(2,"0")}:00`); // 09:00–21:00
 
-const S = {
-  app:  { minHeight:"100vh", background:"linear-gradient(135deg,#0a0e1a 0%,#0d1b2a 50%,#091520 100%)", fontFamily:"'DM Sans','Segoe UI',sans-serif", color:"#e8eaf0" },
-  hdr:  { background:"rgba(255,255,255,0.04)", borderBottom:"1px solid rgba(255,255,255,0.08)", padding:"14px 18px", display:"flex", alignItems:"center", justifyContent:"space-between", backdropFilter:"blur(10px)", position:"sticky", top:0, zIndex:100 },
-  tabs: { display:"flex", borderBottom:"1px solid rgba(255,255,255,0.07)", padding:"0 14px", overflowX:"auto" },
-  page: { padding:"14px" },
-  card: { background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:14, padding:"14px", marginBottom:10 },
-  inp:  { width:"100%", background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:8, padding:"10px 12px", color:"#e8eaf0", fontSize:13, boxSizing:"border-box" },
-  lbl:  { fontSize:11, color:"#8892a4", textTransform:"uppercase", letterSpacing:"0.8px", display:"block", marginBottom:6 },
-  sec:  { fontSize:11, color:"#8892a4", textTransform:"uppercase", letterSpacing:"1px", fontWeight:700, marginBottom:10 },
-};
+// Hours 9AM to 9PM
+const HOURS = [9,10,11,12,13,14,15,16,17,18,19,20,21];
+const H = h => `${h > 12 ? h-12 : h}:00 ${h >= 12 ? "PM" : "AM"}`;
+const HH = h => `${String(h).padStart(2,"0")}:00`;
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function fmtDate(s) {
+  if (!s) return "";
+  const [y,m,d] = s.split("-");
+  const names = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const days  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const dt = new Date(s);
+  return `${days[dt.getDay()]} ${d} ${names[parseInt(m)]}`;
+}
+function dayLabel(s) {
+  if (s === todayStr()) return "Today";
+  const t = new Date(todayStr()); t.setDate(t.getDate()+1);
+  if (s === t.toISOString().split("T")[0]) return "Tomorrow";
+  return fmtDate(s);
+}
+function getDay(offset) {
+  const d = new Date(todayStr()); d.setDate(d.getDate()+offset);
+  return d.toISOString().split("T")[0];
+}
+
+// Check if a slot range overlaps with a booking
+function overlaps(s1, e1, s2, e2) {
+  return !(parseInt(e1) <= parseInt(s2) || parseInt(s1) >= parseInt(e2));
+}
+
+// Get free hour slots for a car on a date given existing bookings
+function getFreeSlots(bookings, carId, date) {
+  const booked = bookings.filter(b =>
+    b.carId === carId && b.date === date && b.status === "BLOCKED"
+  );
+  return HOURS.filter(h =>
+    !booked.some(b => overlaps(h, h+1, parseInt(b.startSlot), parseInt(b.endSlot)))
+  );
+}
+
+// Get blocked ranges for a car on a date
+function getBlockedRanges(bookings, carId, date) {
+  return bookings.filter(b =>
+    b.carId === carId && b.date === date && b.status === "BLOCKED"
+  );
+}
 
 const gold = "linear-gradient(135deg,#c0a060,#e8c878)";
-const sc   = s => s===STATUS.FREE?"#00c896":s===STATUS.BLOCKED?"#f5a623":"#e74c3c";
-const sl   = s => s===STATUS.FREE?"Available":s===STATUS.BLOCKED?"Blocked":"On Drive";
-const ai   = a => ({BLOCKED:"🔒",OUT:"🚗",RETURNED:"✅",UNBLOCKED:"🔓",AUTO_RELEASED:"⏰"}[a]||"•");
+const S = {
+  app:  { minHeight:"100vh", background:"linear-gradient(135deg,#0a0e1a,#0d1b2a)", fontFamily:"'DM Sans','Segoe UI',sans-serif", color:"#e8eaf0" },
+  hdr:  { background:"rgba(255,255,255,0.04)", borderBottom:"1px solid rgba(255,255,255,0.08)", padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:100, backdropFilter:"blur(10px)" },
+  tabs: { display:"flex", borderBottom:"1px solid rgba(255,255,255,0.07)", overflowX:"auto" },
+  page: { padding:"12px" },
+  card: { background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:12, padding:"12px", marginBottom:10 },
+  inp:  { width:"100%", background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:8, padding:"9px 11px", color:"#e8eaf0", fontSize:13, boxSizing:"border-box" },
+  lbl:  { fontSize:10, color:"#8892a4", textTransform:"uppercase", letterSpacing:"0.8px", display:"block", marginBottom:5 },
+};
 
-function todayStr() { return new Date().toISOString().split("T")[0]; }
-function nowTime()  { return new Date().toTimeString().slice(0,5); }
-function getRelativeDay(n) { const d=new Date(); d.setDate(d.getDate()+n); return d.toISOString().split("T")[0]; }
-function isToday(d) { return d===todayStr(); }
-function isFuture(d){ return d>todayStr(); }
-function isPastDateTime(date,time){ if(!date||!time) return false; return new Date(`${date}T${time}`) < new Date(); }
-function formatDate(d){ if(!d) return ""; return new Date(d+"T00:00:00").toLocaleDateString("en-IN",{weekday:"short",day:"2-digit",month:"short"}); }
-function dayLabel(d){ if(!d) return ""; if(isToday(d)) return "Today"; if(d===getRelativeDay(1)) return "Tomorrow"; return formatDate(d); }
-function timeToMins(t){ if(!t) return 0; const [h,m]=t.split(":").map(Number); return h*60+m; }
-function minsToTime(m){ return `${Math.floor(m/60).toString().padStart(2,"0")}:${(m%60).toString().padStart(2,"0")}`; }
-
-// Find free slots for a car on a date
-function getFreeSlots(bookedSlots, dayStart="09:00", dayEnd="21:00") {
-  const start = timeToMins(dayStart), end = timeToMins(dayEnd);
-  const sorted = [...bookedSlots].sort((a,b)=>timeToMins(a.blockStart)-timeToMins(b.blockStart));
-  const free = [];
-  let cursor = start;
-  for (const s of sorted) {
-    const sStart = timeToMins(s.blockStart), sEnd = timeToMins(s.blockEnd);
-    if (sStart > cursor) free.push({ from:minsToTime(cursor), to:minsToTime(sStart) });
-    cursor = Math.max(cursor, sEnd);
-  }
-  if (cursor < end) free.push({ from:minsToTime(cursor), to:minsToTime(end) });
-  return free.filter(f => timeToMins(f.to)-timeToMins(f.from) >= 30);
-}
-
-function ABtn({ children, color, onClick, disabled, small }) {
-  return <button onClick={onClick} disabled={disabled} style={{ background:`${color}18`, border:`1px solid ${color}44`, color, borderRadius:8, padding:small?"5px 10px":"7px 13px", fontSize:small?11:12, fontWeight:600, cursor:disabled?"not-allowed":"pointer", opacity:disabled?0.4:1 }}>{children}</button>;
-}
 function Tab({ active, onClick, children }) {
-  return <button onClick={onClick} style={{ background:"none", border:"none", cursor:"pointer", padding:"12px 13px 10px", fontSize:12, fontWeight:600, color:active?"#c0a060":"#6b7a8d", borderBottom:`2px solid ${active?"#c0a060":"transparent"}`, textTransform:"uppercase", letterSpacing:"0.8px", whiteSpace:"nowrap" }}>{children}</button>;
+  return <button onClick={onClick} style={{ background:"none", border:"none", cursor:"pointer", padding:"11px 12px 9px", fontSize:11, fontWeight:600, color:active?"#c0a060":"#6b7a8d", borderBottom:`2px solid ${active?"#c0a060":"transparent"}`, textTransform:"uppercase", letterSpacing:"0.8px", whiteSpace:"nowrap" }}>{children}</button>;
+}
+function Btn({ children, color="#c0a060", bg, onClick, disabled, full }) {
+  return <button onClick={onClick} disabled={disabled} style={{ background:bg||`${color}18`, border:`1px solid ${color}44`, color, borderRadius:8, padding:"7px 12px", fontSize:12, fontWeight:600, cursor:disabled?"not-allowed":"pointer", opacity:disabled?0.4:1, width:full?"100%":"auto" }}>{children}</button>;
 }
 
-async function apiFetch(p){ const r=await fetch(API_URL+"?"+new URLSearchParams(p)); return r.json(); }
-async function apiPost(b){ const r=await fetch(API_URL,{method:"POST",body:JSON.stringify(b)}); return r.json(); }
+async function apiFetch(p) { const r = await fetch(API_URL+"?"+new URLSearchParams(p)); return r.json(); }
+async function apiPost(b)  { const r = await fetch(API_URL, {method:"POST", body:JSON.stringify(b)}); return r.json(); }
 
-// ── LOGIN ──────────────────────────────────────────────────
-function LoginScreen({ consultants, onLogin }) {
+// ── LOGIN ──────────────────────────────────────────────────────
+function Login({ consultants, onLogin }) {
   const [sel, setSel] = useState("");
   return (
     <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#0a0e1a,#0d1b2a)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24 }}>
-      <div style={{ width:56, height:56, borderRadius:"50%", background:gold, display:"flex", alignItems:"center", justifyContent:"center", fontSize:24, fontWeight:700, color:"#0a0e1a", marginBottom:16 }}>★</div>
-      <div style={{ fontSize:20, fontWeight:700, marginBottom:4 }}>Silver Star MB</div>
-      <div style={{ fontSize:12, color:"#8892a4", letterSpacing:"1px", textTransform:"uppercase", marginBottom:36 }}>Test Drive Manager</div>
-      <div style={{ width:"100%", maxWidth:340 }}>
-        <div style={{ fontSize:13, color:"#8892a4", marginBottom:12, textAlign:"center" }}>Who are you?</div>
-        <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:20 }}>
-          {consultants.map(c=>(
-            <button key={c.name} onClick={()=>setSel(c.name)} style={{ background:sel===c.name?"rgba(192,160,96,0.15)":"rgba(255,255,255,0.04)", border:`1px solid ${sel===c.name?"#c0a060":"rgba(255,255,255,0.08)"}`, borderRadius:10, padding:"12px 16px", color:sel===c.name?"#e8c878":"#e8eaf0", fontSize:14, fontWeight:600, cursor:"pointer", textAlign:"left", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+      <div style={{ width:52, height:52, borderRadius:"50%", background:gold, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, fontWeight:700, color:"#0a0e1a", marginBottom:14 }}>★</div>
+      <div style={{ fontSize:18, fontWeight:700, marginBottom:3 }}>Silver Star MB</div>
+      <div style={{ fontSize:11, color:"#8892a4", letterSpacing:"1.5px", textTransform:"uppercase", marginBottom:32 }}>Test Drive Manager</div>
+      <div style={{ width:"100%", maxWidth:320 }}>
+        <div style={{ fontSize:12, color:"#8892a4", marginBottom:10, textAlign:"center" }}>Select your name</div>
+        <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:16 }}>
+          {consultants.map(c => (
+            <button key={c.name} onClick={() => setSel(c.name)} style={{ background:sel===c.name?"rgba(192,160,96,0.15)":"rgba(255,255,255,0.04)", border:`1px solid ${sel===c.name?"#c0a060":"rgba(255,255,255,0.08)"}`, borderRadius:10, padding:"11px 14px", color:sel===c.name?"#e8c878":"#e8eaf0", fontSize:13, fontWeight:600, cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
               <span>{c.name}</span>
-              {c.role==="admin" && <span style={{ fontSize:10, color:"#c0a060", background:"rgba(192,160,96,0.15)", padding:"2px 8px", borderRadius:10 }}>ADMIN</span>}
+              {c.role==="admin" && <span style={{ fontSize:9, color:"#c0a060", background:"rgba(192,160,96,0.15)", padding:"2px 7px", borderRadius:8 }}>ADMIN</span>}
             </button>
           ))}
         </div>
-        <button onClick={()=>sel&&onLogin(consultants.find(c=>c.name===sel))} disabled={!sel} style={{ width:"100%", background:sel?gold:"rgba(255,255,255,0.06)", border:"none", borderRadius:12, padding:14, color:"#0a0e1a", fontSize:14, fontWeight:700, cursor:sel?"pointer":"not-allowed", opacity:sel?1:0.5 }}>Enter →</button>
+        <button onClick={() => sel && onLogin(consultants.find(c=>c.name===sel))} disabled={!sel} style={{ width:"100%", background:sel?gold:"rgba(255,255,255,0.06)", border:"none", borderRadius:10, padding:13, color:"#0a0e1a", fontSize:13, fontWeight:700, cursor:sel?"pointer":"not-allowed", opacity:sel?1:0.5 }}>Enter →</button>
       </div>
     </div>
   );
 }
 
-// ── TIMELINE BAR (visual slot viewer) ─────────────────────
-function TimelineBar({ bookedSlots, dayStart="09:00", dayEnd="21:00" }) {
-  const totalMins = timeToMins(dayEnd) - timeToMins(dayStart);
-  const freeSlots = getFreeSlots(bookedSlots, dayStart, dayEnd);
+// ── TIMELINE VISUAL ────────────────────────────────────────────
+function Timeline({ bookings, carId, date, outStatus }) {
+  const blocked = getBlockedRanges(bookings, carId, date);
+  const total = 21 - 9; // 9AM to 9PM
   return (
-    <div style={{ marginTop:8 }}>
-      <div style={{ position:"relative", height:18, borderRadius:6, background:"rgba(0,200,150,0.15)", overflow:"hidden", border:"1px solid rgba(0,200,150,0.2)" }}>
-        {/* Booked segments */}
-        {bookedSlots.map((s,i)=>{
-          const left = ((timeToMins(s.blockStart)-timeToMins(dayStart))/totalMins)*100;
-          const width= ((timeToMins(s.blockEnd)-timeToMins(s.blockStart))/totalMins)*100;
-          return <div key={i} title={`${s.blockStart}-${s.blockEnd} · ${s.consultant}`} style={{ position:"absolute", left:`${left}%`, width:`${width}%`, height:"100%", background:"rgba(245,166,35,0.7)", borderLeft:"1px solid rgba(245,166,35,0.9)" }} />;
+    <div style={{ marginTop:6 }}>
+      <div style={{ position:"relative", height:16, borderRadius:5, background:"rgba(0,200,150,0.1)", overflow:"hidden", border:"1px solid rgba(0,200,150,0.15)" }}>
+        {outStatus && <div style={{ position:"absolute", left:0, width:"100%", height:"100%", background:"rgba(231,76,60,0.5)" }} />}
+        {blocked.map((b,i) => {
+          const left  = ((parseInt(b.startSlot)-9)/total)*100;
+          const width = ((parseInt(b.endSlot)-parseInt(b.startSlot))/total)*100;
+          return <div key={i} title={`${b.consultant}: ${H(parseInt(b.startSlot))}–${H(parseInt(b.endSlot))}`} style={{ position:"absolute", left:`${left}%`, width:`${width}%`, height:"100%", background:"rgba(245,166,35,0.75)", borderLeft:"1px solid #f5a623" }} />;
         })}
       </div>
       <div style={{ display:"flex", justifyContent:"space-between", marginTop:2 }}>
-        <span style={{ fontSize:9, color:"#4a5568" }}>{dayStart}</span>
-        <span style={{ fontSize:9, color:"#4a5568" }}>{dayEnd}</span>
+        <span style={{ fontSize:9, color:"#4a5568" }}>9 AM</span>
+        <span style={{ fontSize:9, color:"#4a5568" }}>9 PM</span>
       </div>
-      {/* Free slot pills */}
-      {freeSlots.length>0 && (
-        <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginTop:5 }}>
-          {freeSlots.map((f,i)=>(
-            <span key={i} style={{ fontSize:10, background:"rgba(0,200,150,0.12)", color:"#00c896", padding:"2px 7px", borderRadius:8, border:"1px solid rgba(0,200,150,0.25)" }}>
-              ✅ {f.from}–{f.to}
-            </span>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
-// ── MAIN APP ───────────────────────────────────────────────
-export default function TestDriveApp() {
-  const [user, setUser]               = useState(null);
-  const [consultants, setConsultants] = useState([]);
-  const [cars, setCars]               = useState([]);
-  const [bookings, setBookings]       = useState([]);
-  const [log, setLog]                 = useState([]);
-  const [loading, setLoading]         = useState(true);
-  const [syncing, setSyncing]         = useState(false);
-  const [modal, setModal]             = useState(null);
-  const [form, setForm]               = useState({ consultant:"", customer:"", blockDate:"", blockStart:"", blockEnd:"", expectedReturn:"", phone:"", notes:"", location:"", locLoading:false });
-  const [toast, setToast]             = useState(null);
-  const [tab, setTab]                 = useState("cars");
-  const [schedDate, setSchedDate]     = useState(todayStr());
-  const [newConsultant, setNewConsultant] = useState("");
-  const [newCarName, setNewCarName]       = useState("");
-  const [newCarPlate, setNewCarPlate]     = useState("");
+// ── MAIN APP ───────────────────────────────────────────────────
+export default function App() {
+  const [user, setUser]         = useState(null);
+  const [cars, setCars]         = useState([]);
+  const [consultants, setCons]  = useState([]);
+  const [bookings, setBookings] = useState([]);
+  const [log, setLog]           = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [syncing, setSyncing]   = useState(false);
+  const [tab, setTab]           = useState("today");
+  const [toast, setToast]       = useState(null);
+  const [modal, setModal]       = useState(null); // {type, carId, carName, booking}
+  const [schedDate, setSchedDate] = useState(todayStr());
+  // Form state
+  const [fConsultant, setFC]    = useState("");
+  const [fCustomer, setFCust]   = useState("");
+  const [fPhone, setFPhone]     = useState("");
+  const [fLocation, setFLoc]    = useState("");
+  const [fNotes, setFNotes]     = useState("");
+  const [fDate, setFDate]       = useState(todayStr());
+  const [fStart, setFStart]     = useState("");
+  const [fEnd, setFEnd]         = useState("");
+  const [fReturn, setFReturn]   = useState("");
+  // Settings
+  const [newCName, setNewCName] = useState("");
+  const [newCPlate, setNewCPlate] = useState("");
+  const [newConsName, setNewConsName] = useState("");
 
-  const showToast = (msg,type="success") => { setToast({msg,type}); setTimeout(()=>setToast(null),3500); };
+  const showToast = (msg, type="ok") => { setToast({msg,type}); setTimeout(()=>setToast(null),3500); };
 
-  const fetchData = useCallback(async () => {
+  const load = useCallback(async () => {
     try {
-      const d = await apiFetch({ action:"getData" });
-      if (d.error) { showToast("Sync error","error"); return; }
-      setConsultants(d.consultants||[]);
+      const d = await apiFetch({action:"getData"});
+      if (d.error) { showToast("Connection error","err"); return; }
       setCars(d.cars||[]);
+      setCons(d.consultants||[]);
       setBookings(d.bookings||[]);
-    } catch(e) { showToast("Network error","error"); }
+    } catch { showToast("Network error","err"); }
   },[]);
 
-  const fetchLog = useCallback(async () => {
-    const d = await apiFetch({ action:"getLog" });
+  const loadLog = useCallback(async () => {
+    const d = await apiFetch({action:"getLog"});
     setLog(d.log||[]);
   },[]);
 
-  useEffect(() => {
-    fetchData().finally(()=>setLoading(false));
-    const t = setInterval(fetchData, 15000);
-    return ()=>clearInterval(t);
-  },[fetchData]);
+  useEffect(() => { load().finally(()=>setLoading(false)); const t=setInterval(load,20000); return()=>clearInterval(t); },[load]);
+  useEffect(() => { if(tab==="log") loadLog(); },[tab,loadLog]);
 
-  // Auto-release expired blocks (only if blockEnd passed by more than 30 mins)
-  useEffect(() => {
-    bookings.forEach(b => {
-      if (b.status===STATUS.BLOCKED && b.blockDate && b.blockEnd) {
-        const endDt = new Date(`${b.blockDate}T${b.blockEnd}`);
-        const now   = new Date();
-        const minsExpired = (now - endDt) / 60000;
-        if (minsExpired > 30) {
-          const car = cars.find(c=>String(c.id)===String(b.carId));
-          apiPost({ action:"releaseCar", carId:b.carId, bookingId:b.bookingId, carName:car?.name, requestedBy:"AUTO", requesterRole:"admin", blockedBy:b.consultant, customer:b.customer, autoRelease:true })
-            .then(()=>fetchData());
-        }
-      }
-    });
-  },[bookings]);
-
-  useEffect(() => { if(tab==="log") fetchLog(); },[tab,fetchLog]);
-
-  const doPost = async (body) => {
+  const post = async (body) => {
     setSyncing(true);
     try {
       const r = await apiPost(body);
-      if (r.error||!r.ok) { showToast(r.error||"Failed","error"); return false; }
-      await fetchData(); return true;
-    } catch(e) { showToast("Network error","error"); return false; }
+      if (!r.ok) { showToast(r.error||"Failed","err"); return false; }
+      await load(); return true;
+    } catch { showToast("Network error","err"); return false; }
     finally { setSyncing(false); }
   };
 
-  // Normalize IDs for comparison — handles CAR001, 1, "1", etc.
-  const normId = v => String(v||"").trim().toLowerCase();
-
-  const getCar    = id => cars.find(c=>normId(c.id)===normId(id));
-
-  const carSlots  = (carId, date) => bookings.filter(b => {
-    return normId(b.carId) === normId(carId) &&
-           String(b.blockDate||"").trim() === String(date||"").trim() &&
-           String(b.status||"").trim() === STATUS.BLOCKED;
-  }).sort((a,b) => timeToMins(a.blockStart) - timeToMins(b.blockStart));
-
-  const carOut = (carId) => bookings.find(b =>
-    normId(b.carId) === normId(carId) &&
-    String(b.status||"").trim() === STATUS.OUT
-  );
-
-  const getActiveStatus = (carId) => {
-    const out = carOut(carId);
-    if (out) return {...out, displayStatus:STATUS.OUT};
-    const todayB = bookings.find(b =>
-      normId(b.carId) === normId(carId) &&
-      String(b.status||"").trim() === STATUS.BLOCKED &&
-      String(b.blockDate||"").trim() === todayStr()
-    );
-    if (todayB) return {...todayB, displayStatus:STATUS.BLOCKED};
-    return { displayStatus:STATUS.FREE };
+  // Active status per car (OUT beats BLOCKED beats FREE)
+  const getStatus = (carId) => {
+    const out = bookings.find(b => b.carId===carId && b.status==="OUT");
+    if (out) return {status:"OUT", ...out};
+    const todayBlocked = bookings.find(b => b.carId===carId && b.status==="BLOCKED" && b.date===todayStr());
+    if (todayBlocked) return {status:"BLOCKED", ...todayBlocked};
+    return {status:"FREE"};
   };
 
-  // ── ACTIONS ──────────────────────────────────────────────
-  const handleBlock = async () => {
-    if (!form.consultant||!form.customer) return showToast("Fill all fields","error");
-    if (!form.blockDate) return showToast("Select date","error");
-    if (!form.blockStart||!form.blockEnd) return showToast("Set start & end time","error");
-    if (form.blockStart>=form.blockEnd) return showToast("End must be after start","error");
-    const existing = carSlots(modal.carId, form.blockDate);
-    const conflict = existing.find(b => {
-      const bStart = String(b.blockStart||"").trim();
-      const bEnd   = String(b.blockEnd||"").trim();
-      return !(form.blockEnd<=bStart || form.blockStart>=bEnd);
-    });
-    if (conflict) return showToast(`Conflict: ${conflict.consultant} has ${conflict.blockStart}–${conflict.blockEnd}`,"error");
-    const car = getCar(modal.carId);
-    const ok = await doPost({ action:"blockCar", carId:modal.carId, carName:car?.name, consultant:form.consultant, customer:form.customer, phone:form.phone, notes:form.notes, location:form.location, blockDate:form.blockDate, blockStart:form.blockStart, blockEnd:form.blockEnd });
-    if (ok) { showToast(`Booked for ${dayLabel(form.blockDate)}`); setModal(null); }
+  const openBookModal = (carId, carName, prefDate, prefStart, prefEnd) => {
+    setFC(user.name); setFCust(""); setFPhone(""); setFLoc(""); setFNotes("");
+    setFDate(prefDate||todayStr()); setFStart(prefStart||""); setFEnd(prefEnd||"");
+    setModal({type:"book", carId, carName});
+  };
+
+  const openCheckoutModal = (carId, carName, booking) => {
+    setFC(booking?.consultant||user.name); setFCust(booking?.customer||"");
+    setFReturn(""); setModal({type:"checkout", carId, carName, booking});
+  };
+
+  // ── ACTIONS ────────────────────────────────────────────────
+  const handleBook = async () => {
+    if (!fConsultant||!fCustomer) return showToast("Fill consultant & customer","err");
+    if (!fDate) return showToast("Select a date","err");
+    if (!fStart||!fEnd) return showToast("Select start & end time","err");
+    if (parseInt(fEnd)<=parseInt(fStart)) return showToast("End must be after start","err");
+    const car = cars.find(c=>c.id===modal.carId);
+    const ok = await post({action:"bookSlot", carId:modal.carId, carName:car?.name||modal.carName, consultant:fConsultant, customer:fCustomer, phone:fPhone, location:fLocation, notes:fNotes, date:fDate, startSlot:fStart, endSlot:fEnd});
+    if (ok) { showToast(`Slot booked ✅`); setModal(null); }
   };
 
   const handleCheckout = async () => {
-    if (!form.expectedReturn) return showToast("Set return time","error");
-    const active = getActiveStatus(modal.carId);
-    const car = getCar(modal.carId);
-    const consultant = active.consultant||form.consultant;
-    const customer   = active.customer||form.customer;
-    if (!consultant||!customer) return showToast("Fill consultant & customer","error");
-    const ok = await doPost({ action:"checkoutCar", carId:modal.carId, bookingId:active.bookingId, carName:car?.name, consultant, customer, expectedReturn:form.expectedReturn });
-    if (ok) { showToast(`${car?.name} checked out`); setModal(null); }
+    if (!fReturn) return showToast("Set expected return time","err");
+    const car = cars.find(c=>c.id===modal.carId);
+    const ok = await post({action:"checkout", carId:modal.carId, carName:car?.name||modal.carName, consultant:fConsultant||modal.booking?.consultant, customer:fCustomer||modal.booking?.customer, bookingId:modal.booking?.id, date:todayStr(), returnBy:fReturn});
+    if (ok) { showToast(`Car checked out 🚗`); setModal(null); }
   };
 
-  const handleReturn = async (carId) => {
-    const active = getActiveStatus(carId);
-    const car = getCar(carId);
-    const ok = await doPost({ action:"returnCar", carId, bookingId:active.bookingId, carName:car?.name, consultant:active.consultant, customer:active.customer });
-    if (ok) showToast(`${car?.name} returned ✅`);
+  const handleReturn = async (b) => {
+    const car = cars.find(c=>c.id===b.carId);
+    const ok = await post({action:"returnCar", bookingId:b.id, carName:car?.name||b.carName, consultant:b.consultant, customer:b.customer});
+    if (ok) showToast(`${car?.name||b.carName} returned ✅`);
   };
 
-  const handleRelease = async (carId, booking) => {
-    const car = getCar(carId);
-    if (user.role!=="admin"&&booking.consultant!==user.name) return showToast(`Only ${booking.consultant} or Admin can release`,"error");
-    const ok = await doPost({ action:"releaseCar", carId, bookingId:booking.bookingId, carName:car?.name, requestedBy:user.name, requesterRole:user.role, blockedBy:booking.consultant, customer:booking.customer });
-    if (ok) showToast("Block released");
-  };
-
-  const handleAddConsultant = async () => {
-    const name=newConsultant.trim();
-    if (!name) return showToast("Enter name","error");
-    if (consultants.find(c=>c.name===name)) return showToast("Already exists","error");
-    const ok=await doPost({action:"addConsultant",name,role:"consultant"});
-    if (ok) { setNewConsultant(""); showToast(`${name} added`); }
-  };
-  const handleRemoveConsultant = async (name) => {
-    if (name===user.name) return showToast("Can't remove yourself","error");
-    const ok=await doPost({action:"removeConsultant",name});
-    if (ok) showToast(`${name} removed`);
-  };
-  const handleAddCar = async () => {
-    const name=newCarName.trim(),plate=newCarPlate.trim();
-    if (!name||!plate) return showToast("Enter car & plate","error");
-    const ok=await doPost({action:"addCar",name,plate});
-    if (ok) { setNewCarName(""); setNewCarPlate(""); showToast(`${name} added`); }
-  };
-  const handleRemoveCar = async (carId) => {
-    const a=getActiveStatus(carId);
-    if (a.displayStatus!==STATUS.FREE) return showToast("Return car first","error");
-    const car=getCar(carId);
-    const ok=await doPost({action:"removeCar",carId});
-    if (ok) showToast(`${car?.name} removed`);
+  const handleRelease = async (b) => {
+    if (user.role!=="admin" && b.consultant!==user.name) return showToast(`Only ${b.consultant} or Admin can release`,"err");
+    const car = cars.find(c=>c.id===b.carId);
+    const ok = await post({action:"releaseSlot", bookingId:b.id, carName:car?.name||b.carName, requester:user.name, requesterRole:user.role, bookedBy:b.consultant, customer:b.customer});
+    if (ok) showToast(`Slot released`);
   };
 
   if (loading) return (
-    <div style={{ minHeight:"100vh", background:"#0a0e1a", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", color:"#8892a4", gap:16 }}>
-      <div style={{ width:40, height:40, borderRadius:"50%", background:gold, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, color:"#0a0e1a", fontWeight:700 }}>★</div>
-      <div style={{ fontSize:13 }}>Connecting…</div>
+    <div style={{ minHeight:"100vh", background:"#0a0e1a", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:14, color:"#8892a4" }}>
+      <div style={{ width:38,height:38,borderRadius:"50%",background:gold,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#0a0e1a",fontWeight:700 }}>★</div>
+      <div style={{ fontSize:12 }}>Connecting to Google Sheets…</div>
     </div>
   );
-  if (!user) return <LoginScreen consultants={consultants} onLogin={setUser} />;
+  if (!user) return <Login consultants={consultants} onLogin={setUser} />;
+
+  // Summary counts
+  const available = cars.filter(c=>getStatus(c.id).status==="FREE").length;
+  const blocked   = cars.filter(c=>getStatus(c.id).status==="BLOCKED").length;
+  const onDrive   = cars.filter(c=>getStatus(c.id).status==="OUT").length;
 
   return (
     <div style={S.app}>
       {/* Header */}
       <div style={S.hdr}>
         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          <div style={{ width:34, height:34, borderRadius:"50%", background:gold, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:700, color:"#0a0e1a" }}>★</div>
+          <div style={{ width:32,height:32,borderRadius:"50%",background:gold,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"#0a0e1a" }}>★</div>
           <div>
-            <div style={{ fontSize:14, fontWeight:700 }}>Silver Star MB</div>
-            <div style={{ fontSize:10, color:"#8892a4", letterSpacing:"1px", textTransform:"uppercase" }}>Test Drive Manager</div>
+            <div style={{ fontSize:13,fontWeight:700 }}>Silver Star MB</div>
+            <div style={{ fontSize:9,color:"#8892a4",letterSpacing:"1px",textTransform:"uppercase" }}>Test Drive Manager</div>
           </div>
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          {syncing && <div style={{ fontSize:10, color:"#f5a623" }}>Saving…</div>}
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          {syncing && <div style={{ fontSize:9,color:"#f5a623" }}>Saving…</div>}
           <div style={{ textAlign:"right" }}>
-            <div style={{ fontSize:12, fontWeight:600, color:"#e8c878" }}>{user.name}</div>
-            <div style={{ fontSize:10, color:"#8892a4", textTransform:"uppercase" }}>{user.role}</div>
+            <div style={{ fontSize:11,fontWeight:600,color:"#e8c878" }}>{user.name}</div>
+            <div style={{ fontSize:9,color:"#8892a4",textTransform:"uppercase" }}>{user.role}</div>
           </div>
-          <button onClick={()=>setUser(null)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:6, padding:"4px 8px", color:"#8892a4", fontSize:10, cursor:"pointer" }}>Exit</button>
+          <button onClick={()=>setUser(null)} style={{ background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:5,padding:"3px 7px",color:"#8892a4",fontSize:9,cursor:"pointer" }}>Exit</button>
         </div>
       </div>
 
       {/* Tabs */}
       <div style={S.tabs}>
-        <Tab active={tab==="cars"}      onClick={()=>setTab("cars")}>🚘 Today</Tab>
-        <Tab active={tab==="avail"}     onClick={()=>setTab("avail")}>✅ Availability</Tab>
-        <Tab active={tab==="schedule"}  onClick={()=>setTab("schedule")}>📅 Schedule</Tab>
-        <Tab active={tab==="log"}       onClick={()=>setTab("log")}>📋 Log</Tab>
+        <Tab active={tab==="today"}    onClick={()=>setTab("today")}>🚘 Today</Tab>
+        <Tab active={tab==="avail"}    onClick={()=>setTab("avail")}>✅ Availability</Tab>
+        <Tab active={tab==="schedule"} onClick={()=>setTab("schedule")}>📅 Schedule</Tab>
+        <Tab active={tab==="log"}      onClick={()=>setTab("log")}>📋 Log</Tab>
         {user.role==="admin" && <Tab active={tab==="settings"} onClick={()=>setTab("settings")}>⚙️</Tab>}
       </div>
 
-      {/* ── TODAY TAB ── */}
-      {tab==="cars" && (
+      {/* ── TODAY ── */}
+      {tab==="today" && (
         <div style={S.page}>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:10 }}>
-            {[
-              {label:"Available",count:cars.filter(c=>getActiveStatus(c.id).displayStatus===STATUS.FREE).length,color:"#00c896"},
-              {label:"Blocked",  count:cars.filter(c=>getActiveStatus(c.id).displayStatus===STATUS.BLOCKED).length,color:"#f5a623"},
-              {label:"On Drive", count:cars.filter(c=>getActiveStatus(c.id).displayStatus===STATUS.OUT).length,color:"#e74c3c"},
-            ].map(s=>(
-              <div key={s.label} style={{ background:"rgba(255,255,255,0.04)", borderRadius:10, padding:"10px 6px", textAlign:"center", border:`1px solid ${s.color}22` }}>
-                <div style={{ fontSize:22, fontWeight:700, color:s.color }}>{s.count}</div>
-                <div style={{ fontSize:10, color:"#8892a4", textTransform:"uppercase", letterSpacing:"0.7px" }}>{s.label}</div>
+          {/* Summary */}
+          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10 }}>
+            {[{l:"Available",n:available,c:"#00c896"},{l:"Blocked",n:blocked,c:"#f5a623"},{l:"On Drive",n:onDrive,c:"#e74c3c"}].map(s=>(
+              <div key={s.l} style={{ background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"10px 6px",textAlign:"center",border:`1px solid ${s.c}22` }}>
+                <div style={{ fontSize:22,fontWeight:700,color:s.c }}>{s.n}</div>
+                <div style={{ fontSize:9,color:"#8892a4",textTransform:"uppercase",letterSpacing:"0.7px" }}>{s.l}</div>
               </div>
             ))}
           </div>
-          <div style={{ fontSize:10, color:"#4a5568", textAlign:"center", marginBottom:10 }}>
-            Live · <span style={{ cursor:"pointer", color:"#6b7a8d", textDecoration:"underline" }} onClick={fetchData}>Refresh</span>
+          <div style={{ fontSize:9,color:"#4a5568",textAlign:"center",marginBottom:10 }}>
+            Live · <span style={{ cursor:"pointer",color:"#6b7a8d",textDecoration:"underline" }} onClick={load}>Refresh</span>
           </div>
 
           {cars.map(car => {
-            const active   = getActiveStatus(car.id);
-            const stColor  = sc(active.displayStatus);
-            const canRel   = user.role==="admin"||active.consultant===user.name;
-            const todaySlots = carSlots(car.id, todayStr());
-            const freeSlots  = getFreeSlots(todaySlots);
-            const futureCount = bookings.filter(b=>String(b.carId)===String(car.id)&&b.status===STATUS.BLOCKED&&isFuture(b.blockDate)).length;
+            const active   = getStatus(car.id);
+            const sc       = active.status==="FREE"?"#00c896":active.status==="BLOCKED"?"#f5a623":"#e74c3c";
+            const sl       = active.status==="FREE"?"Available":active.status==="BLOCKED"?"Blocked":"On Drive";
+            const canRel   = user.role==="admin" || active.consultant===user.name;
+            const todaySlots = bookings.filter(b=>b.carId===car.id&&b.date===todayStr()&&b.status==="BLOCKED");
+            const freeHours  = getFreeSlots(bookings, car.id, todayStr());
+            const futureCount = bookings.filter(b=>b.carId===car.id&&b.status==="BLOCKED"&&b.date>todayStr()).length;
 
             return (
-              <div key={car.id} style={{ ...S.card, border:`1px solid ${stColor}33` }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+              <div key={car.id} style={{ ...S.card, border:`1px solid ${sc}33` }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8 }}>
                   <div>
-                    <div style={{ fontSize:16, fontWeight:700 }}>{car.name}</div>
-                    <div style={{ fontSize:11, color:"#8892a4", marginTop:1 }}>{car.plate}</div>
+                    <div style={{ fontSize:15,fontWeight:700 }}>{car.name}</div>
+                    <div style={{ fontSize:10,color:"#8892a4" }}>{car.plate}</div>
                   </div>
-                  <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
-                    <div style={{ background:`${stColor}22`, color:stColor, padding:"4px 12px", borderRadius:20, fontSize:11, fontWeight:700, textTransform:"uppercase", border:`1px solid ${stColor}44` }}>{sl(active.displayStatus)}</div>
-                    {futureCount>0 && <div style={{ fontSize:10, color:"#f5a623", background:"rgba(245,166,35,0.1)", padding:"2px 8px", borderRadius:8, border:"1px solid rgba(245,166,35,0.25)" }}>📅 {futureCount} upcoming</div>}
+                  <div style={{ display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4 }}>
+                    <div style={{ background:`${sc}22`,color:sc,padding:"3px 10px",borderRadius:16,fontSize:10,fontWeight:700,textTransform:"uppercase",border:`1px solid ${sc}44` }}>{sl}</div>
+                    {futureCount>0 && <div style={{ fontSize:9,color:"#f5a623",background:"rgba(245,166,35,0.1)",padding:"2px 7px",borderRadius:8,border:"1px solid rgba(245,166,35,0.25)" }}>📅 {futureCount} upcoming</div>}
                   </div>
                 </div>
 
-                {/* Today's timeline */}
-                <div style={{ marginBottom:8 }}>
-                  <div style={{ fontSize:10, color:"#8892a4", textTransform:"uppercase", letterSpacing:"0.7px", marginBottom:4 }}>Today's Timeline</div>
-                  <TimelineBar bookedSlots={todaySlots} />
-                  {active.displayStatus===STATUS.OUT && (
-                    <div style={{ fontSize:11, color:"#e74c3c", marginTop:4 }}>🚗 Currently out · Return by {active.expectedReturn||"—"}</div>
-                  )}
-                </div>
+                {/* Timeline */}
+                <Timeline bookings={bookings} carId={car.id} date={todayStr()} outStatus={active.status==="OUT"} />
 
-                {/* Active booking info */}
-                {active.displayStatus!==STATUS.FREE && (
-                  <div style={{ background:"rgba(0,0,0,0.2)", borderRadius:10, padding:"8px 12px", marginBottom:8, fontSize:12 }}>
-                    <div style={{ display:"flex", gap:14, flexWrap:"wrap" }}>
-                      <div><span style={{ color:"#8892a4" }}>Consultant: </span><b>{active.consultant}</b></div>
-                      <div><span style={{ color:"#8892a4" }}>Customer: </span><b>{active.customer}</b></div>
+                {/* Active details */}
+                {active.status!=="FREE" && (
+                  <div style={{ background:"rgba(0,0,0,0.2)",borderRadius:8,padding:"8px 10px",margin:"8px 0",fontSize:11 }}>
+                    <div style={{ display:"flex",gap:12,flexWrap:"wrap" }}>
+                      <span><span style={{ color:"#8892a4" }}>By: </span><b>{active.consultant}</b></span>
+                      <span><span style={{ color:"#8892a4" }}>Customer: </span><b>{active.customer}</b></span>
                     </div>
-                    {active.displayStatus===STATUS.BLOCKED && active.blockStart && (
-                      <div style={{ color:"#f5a623", marginTop:4, fontWeight:600 }}>⏰ {active.blockStart} → {active.blockEnd}</div>
-                    )}
-                    {active.location && (
-                      <div style={{ marginTop:4, fontSize:11, color:"#63b3ed" }}>📍 {active.location}</div>
-                    )}
-                    {active.displayStatus===STATUS.BLOCKED && !canRel && (
-                      <div style={{ marginTop:5, fontSize:11, color:"#f5a623", background:"rgba(245,166,35,0.08)", borderRadius:6, padding:"4px 8px" }}>🔐 Only {active.consultant} or Admin can release</div>
-                    )}
+                    {active.status==="BLOCKED" && <div style={{ color:"#f5a623",marginTop:4,fontSize:11,fontWeight:600 }}>⏰ {H(parseInt(active.startSlot))} – {H(parseInt(active.endSlot))}</div>}
+                    {active.status==="OUT" && active.returnBy && <div style={{ color:"#00c896",marginTop:4 }}>Return by {active.returnBy}</div>}
+                    {active.location && <div style={{ color:"#63b3ed",marginTop:3,fontSize:10 }}>📍 {active.location}</div>}
+                    {active.status==="BLOCKED" && !canRel && <div style={{ marginTop:5,fontSize:10,color:"#f5a623",background:"rgba(245,166,35,0.08)",borderRadius:5,padding:"3px 7px" }}>🔐 Only {active.consultant} or Admin can release</div>}
                   </div>
                 )}
 
-                {/* Action buttons */}
-                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                  {active.displayStatus===STATUS.FREE && (<>
-                    <ABtn color="#f5a623" onClick={()=>{ setForm({consultant:user.name,customer:"",phone:"",notes:"",location:"",locLoading:false,blockDate:todayStr(),blockStart:"",blockEnd:"",expectedReturn:""}); setModal({carId:car.id,action:"block"}); }}>🔒 Book Slot</ABtn>
-                    <ABtn color="#e74c3c" onClick={()=>{ setForm({consultant:user.name,customer:"",phone:"",notes:"",location:"",locLoading:false,blockDate:"",blockStart:"",blockEnd:"",expectedReturn:""}); setModal({carId:car.id,action:"checkout"}); }}>🚗 Take Out</ABtn>
-                  </>)}
-                  {active.displayStatus===STATUS.BLOCKED && (<>
-                    {isToday(active.blockDate) && <ABtn color="#e74c3c" onClick={()=>{ setForm({consultant:active.consultant,customer:active.customer,phone:"",notes:"",location:"",locLoading:false,blockDate:"",blockStart:"",blockEnd:"",expectedReturn:""}); setModal({carId:car.id,action:"checkout_from_block"}); }}>🚗 Take Out Now</ABtn>}
-                    <ABtn color="#6b7a8d" onClick={()=>handleRelease(car.id,active)} disabled={!canRel}>🔓 Release{!canRel?" 🔐":""}</ABtn>
-                    <ABtn color="#f5a623" onClick={()=>{ setForm({consultant:user.name,customer:"",phone:"",notes:"",location:"",locLoading:false,blockDate:todayStr(),blockStart:"",blockEnd:"",expectedReturn:""}); setModal({carId:car.id,action:"block"}); }}>+ Slot</ABtn>
-                  </>)}
-                  {active.displayStatus===STATUS.OUT && (
-                    <ABtn color="#00c896" onClick={()=>handleReturn(car.id)}>✅ Mark Returned</ABtn>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ── AVAILABILITY TAB ── */}
-      {tab==="avail" && (
-        <div style={S.page}>
-          <div style={{ marginBottom:14 }}>
-            <label style={S.lbl}>Check availability for</label>
-            <input type="date" value={schedDate} min={todayStr()} onChange={e=>setSchedDate(e.target.value)} style={S.inp} />
-            <div style={{ fontSize:12, color:"#e8c878", marginTop:6, fontWeight:600 }}>📅 {dayLabel(schedDate)||schedDate}</div>
-          </div>
-
-          {cars.map(car => {
-            const slots     = carSlots(car.id, schedDate);
-            const freeSlots = getFreeSlots(slots);
-            const outB      = carOut(car.id);
-            const isFullyBusy = isToday(schedDate) && outB;
-
-            return (
-              <div key={car.id} style={{ ...S.card, border:`1px solid ${freeSlots.length>0?"rgba(0,200,150,0.25)":"rgba(245,166,35,0.25)"}` }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-                  <div>
-                    <div style={{ fontSize:15, fontWeight:700 }}>{car.name}</div>
-                    <div style={{ fontSize:11, color:"#8892a4" }}>{car.plate}</div>
-                  </div>
-                  <div style={{ fontSize:11, fontWeight:700, color:freeSlots.length>0?"#00c896":"#f5a623", background:freeSlots.length>0?"rgba(0,200,150,0.1)":"rgba(245,166,35,0.1)", padding:"4px 12px", borderRadius:20, border:`1px solid ${freeSlots.length>0?"rgba(0,200,150,0.3)":"rgba(245,166,35,0.3)"}` }}>
-                    {isFullyBusy?"On Drive":freeSlots.length>0?`${freeSlots.length} Free Slot${freeSlots.length>1?"s":""}` : "Fully Booked"}
-                  </div>
-                </div>
-
-                {/* Visual timeline */}
-                <TimelineBar bookedSlots={slots} />
-
-                {/* Booked slots */}
-                {slots.length>0 && (
-                  <div style={{ marginTop:8 }}>
-                    <div style={{ fontSize:10, color:"#8892a4", textTransform:"uppercase", letterSpacing:"0.7px", marginBottom:4 }}>Booked Slots</div>
-                    {slots.map((s,i)=>(
-                      <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:"rgba(245,166,35,0.06)", borderRadius:8, padding:"6px 10px", marginBottom:4, border:"1px solid rgba(245,166,35,0.2)" }}>
-                        <div style={{ fontSize:12 }}>
-                          <span style={{ color:"#f5a623", fontWeight:600 }}>🔒 {s.blockStart}–{s.blockEnd}</span>
-                          <span style={{ color:"#8892a4", marginLeft:8 }}>{s.consultant} · {s.customer}</span>
-                          {s.location && <div style={{ color:"#63b3ed", fontSize:11, marginTop:2 }}>📍 {s.location}</div>}
-                        </div>
-                        {(user.role==="admin"||s.consultant===user.name) && (
-                          <button onClick={()=>handleRelease(car.id,s)} style={{ background:"rgba(231,76,60,0.1)", border:"1px solid rgba(231,76,60,0.25)", color:"#e74c3c", borderRadius:6, padding:"3px 8px", fontSize:10, cursor:"pointer" }}>Cancel</button>
-                        )}
+                {/* Today's all slots */}
+                {todaySlots.length>0 && (
+                  <div style={{ marginBottom:8 }}>
+                    <div style={{ fontSize:9,color:"#8892a4",textTransform:"uppercase",letterSpacing:"0.7px",marginBottom:4 }}>Today's Bookings</div>
+                    {todaySlots.map((s,i)=>(
+                      <div key={i} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",background:"rgba(245,166,35,0.06)",borderRadius:7,padding:"5px 8px",marginBottom:3,border:"1px solid rgba(245,166,35,0.2)",fontSize:11 }}>
+                        <span><b style={{ color:"#f5a623" }}>{H(parseInt(s.startSlot))}–{H(parseInt(s.endSlot))}</b> · {s.consultant} · {s.customer}</span>
+                        {(user.role==="admin"||s.consultant===user.name) && <button onClick={()=>handleRelease(s)} style={{ background:"rgba(231,76,60,0.1)",border:"1px solid rgba(231,76,60,0.25)",color:"#e74c3c",borderRadius:5,padding:"2px 7px",fontSize:10,cursor:"pointer" }}>✕</button>}
                       </div>
                     ))}
                   </div>
                 )}
 
-                {/* Free slots */}
-                {freeSlots.length>0 && !isFullyBusy && (
+                {/* Actions */}
+                <div style={{ display:"flex",gap:7,flexWrap:"wrap" }}>
+                  {active.status==="FREE" && <>
+                    <Btn color="#f5a623" onClick={()=>openBookModal(car.id,car.name)}>🔒 Book Slot</Btn>
+                    <Btn color="#e74c3c" onClick={()=>openCheckoutModal(car.id,car.name,null)}>🚗 Take Out</Btn>
+                  </>}
+                  {active.status==="BLOCKED" && <>
+                    <Btn color="#e74c3c" onClick={()=>openCheckoutModal(car.id,car.name,active)}>🚗 Take Out Now</Btn>
+                    {canRel && <Btn color="#6b7a8d" onClick={()=>handleRelease(active)}>🔓 Release</Btn>}
+                    <Btn color="#f5a623" onClick={()=>openBookModal(car.id,car.name)}>+ Add Slot</Btn>
+                  </>}
+                  {active.status==="OUT" && <Btn color="#00c896" onClick={()=>handleReturn(active)}>✅ Mark Returned</Btn>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── AVAILABILITY ── */}
+      {tab==="avail" && (
+        <div style={S.page}>
+          <div style={{ marginBottom:12 }}>
+            <label style={S.lbl}>Check availability for date</label>
+            <input type="date" value={schedDate} min={todayStr()} onChange={e=>setSchedDate(e.target.value)} style={S.inp} />
+            <div style={{ fontSize:11,color:"#e8c878",marginTop:5,fontWeight:600 }}>📅 {dayLabel(schedDate)}</div>
+          </div>
+
+          {cars.map(car => {
+            const slots    = bookings.filter(b=>b.carId===car.id&&b.date===schedDate&&b.status==="BLOCKED").sort((a,b)=>parseInt(a.startSlot)-parseInt(b.startSlot));
+            const freeHrs  = getFreeSlots(bookings, car.id, schedDate);
+            const outB     = bookings.find(b=>b.carId===car.id&&b.status==="OUT");
+
+            // Group consecutive free hours into ranges
+            const freeRanges = [];
+            let start = null;
+            freeHrs.forEach((h,i) => {
+              if (start===null) start=h;
+              if (!freeHrs.includes(h+1)) { freeRanges.push({s:start,e:h+1}); start=null; }
+            });
+
+            return (
+              <div key={car.id} style={{ ...S.card, border:`1px solid ${freeRanges.length>0?"rgba(0,200,150,0.25)":"rgba(245,166,35,0.25)"}` }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8 }}>
+                  <div>
+                    <div style={{ fontSize:14,fontWeight:700 }}>{car.name}</div>
+                    <div style={{ fontSize:10,color:"#8892a4" }}>{car.plate}</div>
+                  </div>
+                  <div style={{ fontSize:10,fontWeight:700,color:freeRanges.length>0?"#00c896":"#f5a623",background:freeRanges.length>0?"rgba(0,200,150,0.1)":"rgba(245,166,35,0.1)",padding:"3px 10px",borderRadius:14,border:`1px solid ${freeRanges.length>0?"rgba(0,200,150,0.3)":"rgba(245,166,35,0.3)"}` }}>
+                    {outB&&schedDate===todayStr()?"On Drive":freeRanges.length===0?"Fully Booked":`${freeRanges.length} Free Range${freeRanges.length>1?"s":""}`}
+                  </div>
+                </div>
+
+                <Timeline bookings={bookings} carId={car.id} date={schedDate} outStatus={outB&&schedDate===todayStr()} />
+
+                {/* Booked slots */}
+                {slots.length>0 && (
                   <div style={{ marginTop:8 }}>
-                    <div style={{ fontSize:10, color:"#8892a4", textTransform:"uppercase", letterSpacing:"0.7px", marginBottom:4 }}>Available Slots</div>
-                    {freeSlots.map((f,i)=>(
-                      <button key={i} onClick={()=>{ setForm({consultant:user.name,customer:"",phone:"",notes:"",location:"",locLoading:false,blockDate:schedDate,blockStart:f.from,blockEnd:f.to,expectedReturn:""}); setModal({carId:car.id,action:"block"}); setTab("cars"); }}
-                        style={{ display:"block", width:"100%", background:"rgba(0,200,150,0.06)", border:"1px dashed rgba(0,200,150,0.35)", borderRadius:8, padding:"7px 10px", marginBottom:4, color:"#00c896", fontSize:12, cursor:"pointer", textAlign:"left", fontWeight:600 }}>
-                        ✅ {f.from} – {f.to} &nbsp;<span style={{ color:"#6b7a8d", fontWeight:400, fontSize:11 }}>Tap to book</span>
-                      </button>
+                    <div style={{ fontSize:9,color:"#8892a4",textTransform:"uppercase",letterSpacing:"0.7px",marginBottom:4 }}>Booked Slots</div>
+                    {slots.map((s,i)=>(
+                      <div key={i} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",background:"rgba(245,166,35,0.06)",borderRadius:7,padding:"5px 8px",marginBottom:3,border:"1px solid rgba(245,166,35,0.2)",fontSize:11 }}>
+                        <span><b style={{ color:"#f5a623" }}>🔒 {H(parseInt(s.startSlot))}–{H(parseInt(s.endSlot))}</b> · {s.consultant} · {s.customer}</span>
+                        {(user.role==="admin"||s.consultant===user.name) && <button onClick={()=>handleRelease(s)} style={{ background:"rgba(231,76,60,0.1)",border:"1px solid rgba(231,76,60,0.25)",color:"#e74c3c",borderRadius:5,padding:"2px 7px",fontSize:10,cursor:"pointer" }}>✕</button>}
+                      </div>
                     ))}
                   </div>
                 )}
 
-                {freeSlots.length===0 && !isFullyBusy && slots.length>0 && (
-                  <div style={{ fontSize:12, color:"#6b7a8d", textAlign:"center", marginTop:8, padding:"6px", background:"rgba(231,76,60,0.06)", borderRadius:8 }}>
-                    🚫 No free slots on this day
+                {/* Free ranges — tap to book */}
+                {freeRanges.length>0 && (
+                  <div style={{ marginTop:8 }}>
+                    <div style={{ fontSize:9,color:"#8892a4",textTransform:"uppercase",letterSpacing:"0.7px",marginBottom:4 }}>Available — Tap to Book</div>
+                    {freeRanges.map((r,i)=>(
+                      <button key={i} onClick={()=>{ openBookModal(car.id,car.name,schedDate,String(r.s),String(r.e)); setTab("today"); }}
+                        style={{ display:"block",width:"100%",background:"rgba(0,200,150,0.06)",border:"1px dashed rgba(0,200,150,0.4)",borderRadius:7,padding:"6px 8px",color:"#00c896",fontSize:11,cursor:"pointer",textAlign:"left",marginBottom:4,fontWeight:600 }}>
+                        ✅ {H(r.s)} – {H(r.e)} &nbsp;<span style={{ color:"#6b7a8d",fontSize:10,fontWeight:400 }}>Tap to book this slot</span>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
@@ -478,38 +425,43 @@ export default function TestDriveApp() {
         </div>
       )}
 
-      {/* ── SCHEDULE TAB (7-day overview) ── */}
+      {/* ── SCHEDULE (7 days) ── */}
       {tab==="schedule" && (
         <div style={S.page}>
-          <div style={{ fontSize:12, color:"#8892a4", marginBottom:12 }}>7-day booking overview for all cars</div>
-          {cars.map(car=>(
+          <div style={{ fontSize:11,color:"#8892a4",marginBottom:10 }}>7-day overview — all cars</div>
+          {cars.map(car => (
             <div key={car.id} style={S.card}>
-              <div style={{ fontSize:15, fontWeight:700, marginBottom:10 }}>{car.name} <span style={{ fontSize:11, color:"#8892a4" }}>{car.plate}</span></div>
-              {Array.from({length:7},(_,i)=>getRelativeDay(i)).map(day=>{
-                const slots = carSlots(car.id, day);
-                const free  = getFreeSlots(slots);
+              <div style={{ fontSize:14,fontWeight:700,marginBottom:10 }}>{car.name} <span style={{ fontSize:10,color:"#8892a4" }}>{car.plate}</span></div>
+              {Array.from({length:7},(_,i)=>getDay(i)).map(day => {
+                const slots = bookings.filter(b=>b.carId===car.id&&b.date===day&&b.status==="BLOCKED").sort((a,b)=>parseInt(a.startSlot)-parseInt(b.startSlot));
+                const free  = getFreeSlots(bookings, car.id, day);
+                // Group free hours
+                const freeRanges = [];
+                let st = null;
+                free.forEach(h => {
+                  if (st===null) st=h;
+                  if (!free.includes(h+1)) { freeRanges.push({s:st,e:h+1}); st=null; }
+                });
                 return (
-                  <div key={day} style={{ display:"flex", gap:8, alignItems:"flex-start", marginBottom:8, paddingBottom:8, borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-                    <div style={{ width:72, flexShrink:0 }}>
-                      <div style={{ fontSize:12, fontWeight:isToday(day)?700:400, color:isToday(day)?"#e8c878":"#e8eaf0" }}>{dayLabel(day)}</div>
-                      <div style={{ fontSize:10, color:"#6b7a8d" }}>{day.slice(5)}</div>
+                  <div key={day} style={{ display:"flex",gap:8,alignItems:"flex-start",marginBottom:8,paddingBottom:8,borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                    <div style={{ width:74,flexShrink:0 }}>
+                      <div style={{ fontSize:11,fontWeight:day===todayStr()?700:400,color:day===todayStr()?"#e8c878":"#e8eaf0" }}>{dayLabel(day)}</div>
+                      <div style={{ fontSize:9,color:"#6b7a8d" }}>{day.slice(5)}</div>
                     </div>
                     <div style={{ flex:1 }}>
-                      {slots.length===0
-                        ? <span style={{ fontSize:11, color:"#00c896", background:"rgba(0,200,150,0.08)", padding:"2px 8px", borderRadius:8, border:"1px solid rgba(0,200,150,0.2)" }}>✅ Fully Free</span>
-                        : (<>
-                          {slots.map((s,i)=>(
-                            <span key={i} style={{ display:"inline-block", fontSize:11, background:"rgba(245,166,35,0.12)", color:"#f5a623", padding:"2px 7px", borderRadius:8, border:"1px solid rgba(245,166,35,0.25)", marginRight:4, marginBottom:3 }}>
-                              🔒 {s.blockStart}–{s.blockEnd} · {s.consultant}
-                            </span>
-                          ))}
-                          {free.map((f,i)=>(
-                            <span key={i} style={{ display:"inline-block", fontSize:11, background:"rgba(0,200,150,0.08)", color:"#00c896", padding:"2px 7px", borderRadius:8, border:"1px solid rgba(0,200,150,0.2)", marginRight:4, marginBottom:3 }}>
-                              ✅ {f.from}–{f.to}
-                            </span>
-                          ))}
-                        </>)
-                      }
+                      <Timeline bookings={bookings} carId={car.id} date={day} outStatus={false} />
+                      <div style={{ display:"flex",flexWrap:"wrap",gap:4,marginTop:5 }}>
+                        {slots.map((s,i)=>(
+                          <span key={i} style={{ fontSize:10,background:"rgba(245,166,35,0.12)",color:"#f5a623",padding:"2px 6px",borderRadius:6,border:"1px solid rgba(245,166,35,0.25)" }}>
+                            🔒 {H(parseInt(s.startSlot))}–{H(parseInt(s.endSlot))} · {s.consultant}
+                          </span>
+                        ))}
+                        {freeRanges.map((r,i)=>(
+                          <span key={i} style={{ fontSize:10,background:"rgba(0,200,150,0.08)",color:"#00c896",padding:"2px 6px",borderRadius:6,border:"1px solid rgba(0,200,150,0.2)" }}>
+                            ✅ {H(r.s)}–{H(r.e)}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 );
@@ -519,185 +471,180 @@ export default function TestDriveApp() {
         </div>
       )}
 
-      {/* ── LOG TAB ── */}
+      {/* ── LOG ── */}
       {tab==="log" && (
         <div style={S.page}>
-          <button onClick={fetchLog} style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:8, padding:"7px 14px", color:"#8892a4", fontSize:12, cursor:"pointer", marginBottom:12 }}>↻ Refresh</button>
+          <button onClick={loadLog} style={{ background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:7,padding:"6px 12px",color:"#8892a4",fontSize:11,cursor:"pointer",marginBottom:10 }}>↻ Refresh</button>
           {log.length===0
-            ? <div style={{ textAlign:"center", color:"#6b7a8d", marginTop:40, fontSize:14 }}>No activity yet</div>
+            ? <div style={{ textAlign:"center",color:"#6b7a8d",marginTop:40,fontSize:13 }}>No activity yet</div>
             : log.map((e,i)=>(
-              <div key={i} style={{ ...S.card, display:"flex", gap:12, alignItems:"flex-start", padding:"11px 13px" }}>
-                <div style={{ fontSize:18, marginTop:2 }}>{ai(e.action)}</div>
+              <div key={i} style={{ ...S.card, display:"flex",gap:10,alignItems:"flex-start",padding:"10px 12px" }}>
+                <div style={{ fontSize:16,marginTop:1 }}>{{ BOOKED:"🔒",CHECKOUT:"🚗",RETURNED:"✅",RELEASED:"🔓",AUTO_RELEASED:"⏰" }[e.action]||"•"}</div>
                 <div style={{ flex:1 }}>
-                  <div style={{ fontSize:13, fontWeight:600 }}>{e.car} — {e.action}</div>
-                  <div style={{ fontSize:11, color:"#8892a4", marginTop:3 }}>{e.consultant} · {e.customer}{e.expectedReturn?` · ${e.expectedReturn}`:""}</div>
+                  <div style={{ fontSize:12,fontWeight:600 }}>{e.car} — {e.action}</div>
+                  <div style={{ fontSize:10,color:"#8892a4",marginTop:2 }}>{e.consultant} · {e.customer}{e.detail?` · ${e.detail}`:""}</div>
                 </div>
-                <div style={{ fontSize:11, color:"#6b7a8d", whiteSpace:"nowrap" }}>{e.time}</div>
+                <div style={{ fontSize:10,color:"#6b7a8d",whiteSpace:"nowrap" }}>{e.time}</div>
               </div>
             ))
           }
         </div>
       )}
 
-      {/* ── SETTINGS TAB ── */}
+      {/* ── SETTINGS ── */}
       {tab==="settings" && user.role==="admin" && (
         <div style={S.page}>
+          {/* Add Car */}
           <div style={S.card}>
-            <div style={S.sec}>👤 Consultants</div>
-            <div style={{ display:"flex", gap:8, marginBottom:12 }}>
-              <input value={newConsultant} onChange={e=>setNewConsultant(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleAddConsultant()} placeholder="New consultant name" style={{ ...S.inp, flex:1 }} />
-              <button onClick={handleAddConsultant} style={{ background:gold, border:"none", borderRadius:8, padding:"10px 14px", color:"#0a0e1a", fontSize:13, fontWeight:700, cursor:"pointer" }}>+ Add</button>
+            <div style={{ fontSize:10,color:"#8892a4",textTransform:"uppercase",letterSpacing:"1px",fontWeight:700,marginBottom:8 }}>🚗 Fleet Cars</div>
+            <div style={{ display:"flex",flexDirection:"column",gap:7,marginBottom:10 }}>
+              <input value={newCName} onChange={e=>setNewCName(e.target.value)} placeholder="Model (e.g. GLS 450)" style={S.inp} />
+              <input value={newCPlate} onChange={e=>setNewCPlate(e.target.value)} placeholder="Plate (e.g. TS09 MB005)" style={S.inp} />
+              <Btn color="#c0a060" bg={gold} onClick={async()=>{ if(!newCName||!newCPlate) return showToast("Fill both fields","err"); const ok=await post({action:"addCar",name:newCName,plate:newCPlate}); if(ok){setNewCName("");setNewCPlate("");showToast("Car added ✅");} }}>+ Add Car</Btn>
             </div>
-            {consultants.map(c=>(
-              <div key={c.name} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 12px", background:"rgba(255,255,255,0.04)", borderRadius:8, marginBottom:6 }}>
-                <div style={{ display:"flex", alignItems:"center", gap:9 }}>
-                  <div style={{ width:28, height:28, borderRadius:"50%", background:"rgba(192,160,96,0.2)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, color:"#c0a060", fontWeight:700 }}>{c.name[0]}</div>
-                  <span style={{ fontSize:13 }}>{c.name}</span>
-                  {c.role==="admin" && <span style={{ fontSize:10, color:"#c0a060", background:"rgba(192,160,96,0.1)", padding:"2px 7px", borderRadius:8 }}>ADMIN</span>}
-                </div>
-                {c.name!==user.name && <button onClick={()=>handleRemoveConsultant(c.name)} style={{ background:"rgba(231,76,60,0.1)", border:"1px solid rgba(231,76,60,0.25)", color:"#e74c3c", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer" }}>Remove</button>}
+            {cars.map(c=>(
+              <div key={c.id} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 10px",background:"rgba(255,255,255,0.04)",borderRadius:7,marginBottom:5 }}>
+                <div><div style={{ fontSize:12,fontWeight:600 }}>{c.name}</div><div style={{ fontSize:10,color:"#8892a4" }}>{c.plate}</div></div>
+                <button onClick={async()=>{ if(!window.confirm(`Remove ${c.name}?`)) return; const ok=await post({action:"removeCar",carId:c.id}); if(ok) showToast(`${c.name} removed`); }} style={{ background:"rgba(231,76,60,0.1)",border:"1px solid rgba(231,76,60,0.25)",color:"#e74c3c",borderRadius:5,padding:"3px 8px",fontSize:10,cursor:"pointer" }}>Remove</button>
               </div>
             ))}
           </div>
+          {/* Add Consultant */}
           <div style={S.card}>
-            <div style={S.sec}>🚗 Fleet Cars</div>
-            <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:12 }}>
-              <input value={newCarName}  onChange={e=>setNewCarName(e.target.value)}  placeholder="Car model" style={S.inp} />
-              <input value={newCarPlate} onChange={e=>setNewCarPlate(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleAddCar()} placeholder="Number plate" style={S.inp} />
-              <button onClick={handleAddCar} style={{ background:gold, border:"none", borderRadius:8, padding:10, color:"#0a0e1a", fontSize:13, fontWeight:700, cursor:"pointer" }}>+ Add Car</button>
+            <div style={{ fontSize:10,color:"#8892a4",textTransform:"uppercase",letterSpacing:"1px",fontWeight:700,marginBottom:8 }}>👤 Consultants</div>
+            <div style={{ display:"flex",gap:7,marginBottom:10 }}>
+              <input value={newConsName} onChange={e=>setNewConsName(e.target.value)} placeholder="Consultant name" style={{ ...S.inp,flex:1 }} />
+              <Btn color="#c0a060" bg={gold} onClick={async()=>{ if(!newConsName) return; const ok=await post({action:"addConsultant",name:newConsName,role:"consultant"}); if(ok){setNewConsName("");showToast("Added ✅");} }}>+ Add</Btn>
             </div>
-            {cars.map(car=>{
-              const a=getActiveStatus(car.id),inUse=a.displayStatus!==STATUS.FREE,stC=sc(a.displayStatus);
-              return (
-                <div key={car.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 12px", background:"rgba(255,255,255,0.04)", borderRadius:8, marginBottom:6 }}>
-                  <div>
-                    <div style={{ fontSize:13, fontWeight:600 }}>{car.name}</div>
-                    <div style={{ fontSize:11, color:"#8892a4" }}>{car.plate} · <span style={{ color:stC }}>{sl(a.displayStatus)}</span></div>
-                  </div>
-                  <button onClick={()=>handleRemoveCar(car.id)} disabled={inUse} style={{ background:inUse?"rgba(255,255,255,0.03)":"rgba(231,76,60,0.1)", border:`1px solid ${inUse?"rgba(255,255,255,0.07)":"rgba(231,76,60,0.25)"}`, color:inUse?"#4a5568":"#e74c3c", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:inUse?"not-allowed":"pointer" }}>
-                    {inUse?"In Use":"Remove"}
-                  </button>
+            {consultants.map(c=>(
+              <div key={c.name} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 10px",background:"rgba(255,255,255,0.04)",borderRadius:7,marginBottom:5 }}>
+                <div style={{ display:"flex",alignItems:"center",gap:8 }}>
+                  <div style={{ width:26,height:26,borderRadius:"50%",background:"rgba(192,160,96,0.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#c0a060",fontWeight:700 }}>{c.name[0]}</div>
+                  <span style={{ fontSize:12 }}>{c.name}</span>
+                  {c.role==="admin"&&<span style={{ fontSize:9,color:"#c0a060",background:"rgba(192,160,96,0.1)",padding:"1px 6px",borderRadius:6 }}>ADMIN</span>}
                 </div>
-              );
-            })}
+                {c.name!==user.name&&<button onClick={async()=>{ const ok=await post({action:"removeConsultant",name:c.name}); if(ok) showToast(`${c.name} removed`); }} style={{ background:"rgba(231,76,60,0.1)",border:"1px solid rgba(231,76,60,0.25)",color:"#e74c3c",borderRadius:5,padding:"3px 8px",fontSize:10,cursor:"pointer" }}>Remove</button>}
+              </div>
+            ))}
           </div>
         </div>
       )}
 
       {/* ── BOOKING MODAL ── */}
       {modal && (
-        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:200, backdropFilter:"blur(4px)" }} onClick={()=>setModal(null)}>
-          <div style={{ background:"#0f1624", borderRadius:"20px 20px 0 0", padding:"22px 18px 36px", width:"100%", maxWidth:480, border:"1px solid rgba(255,255,255,0.1)", boxShadow:"0 -20px 60px rgba(0,0,0,0.5)", maxHeight:"90vh", overflowY:"auto" }} onClick={e=>e.stopPropagation()}>
-            <div style={{ fontSize:15, fontWeight:700, marginBottom:4 }}>
-              {modal.action==="block"?"🔒 Book a Test Drive Slot":modal.action==="checkout"?"🚗 Take Car Out":"🚗 Take Out Now"}
-            </div>
-            <div style={{ fontSize:12, color:"#8892a4", marginBottom:16 }}>{getCar(modal.carId)?.name}</div>
+        <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:200,backdropFilter:"blur(4px)" }} onClick={()=>setModal(null)}>
+          <div style={{ background:"#0f1624",borderRadius:"18px 18px 0 0",padding:"20px 16px 32px",width:"100%",maxWidth:480,border:"1px solid rgba(255,255,255,0.1)",boxShadow:"0 -20px 60px rgba(0,0,0,0.5)",maxHeight:"90vh",overflowY:"auto" }} onClick={e=>e.stopPropagation()}>
 
-            {(modal.action==="block"||modal.action==="checkout") && (<>
-              <div style={{ marginBottom:12 }}>
+            <div style={{ fontSize:14,fontWeight:700,marginBottom:3 }}>
+              {modal.type==="book"?"🔒 Book Test Drive Slot":"🚗 Take Car Out"}
+            </div>
+            <div style={{ fontSize:11,color:"#8892a4",marginBottom:14 }}>{modal.carName}</div>
+
+            {/* Consultant */}
+            {modal.type==="book" && (
+              <div style={{ marginBottom:10 }}>
                 <label style={S.lbl}>Consultant</label>
-                <select value={form.consultant} onChange={e=>setForm(f=>({...f,consultant:e.target.value}))} style={S.inp}>
+                <select value={fConsultant} onChange={e=>setFC(e.target.value)} style={S.inp}>
                   <option value="">Select…</option>
                   {consultants.map(c=><option key={c.name} value={c.name}>{c.name}</option>)}
                 </select>
               </div>
-              <div style={{ marginBottom:12 }}>
-                <label style={S.lbl}>Customer Name</label>
-                <input value={form.customer} onChange={e=>setForm(f=>({...f,customer:e.target.value}))} placeholder="Enter customer name" style={S.inp} />
-              </div>
-              <div style={{ marginBottom:12 }}>
-                <label style={S.lbl}>Customer Phone <span style={{ color:"#4a5568" }}>(optional)</span></label>
-                <input value={form.phone} onChange={e=>setForm(f=>({...f,phone:e.target.value}))} placeholder="9XXXXXXXXX" style={S.inp} />
-              </div>
-            </>)}
+            )}
 
-            {modal.action==="block" && (<>
-              <div style={{ marginBottom:12 }}>
+            {/* Customer */}
+            <div style={{ marginBottom:10 }}>
+              <label style={S.lbl}>Customer Name</label>
+              <input value={fCustomer} onChange={e=>setFCust(e.target.value)} placeholder="Enter customer name" style={S.inp} />
+            </div>
+            <div style={{ marginBottom:10 }}>
+              <label style={S.lbl}>Phone <span style={{ color:"#4a5568" }}>(optional)</span></label>
+              <input value={fPhone} onChange={e=>setFPhone(e.target.value)} placeholder="9XXXXXXXXX" style={S.inp} />
+            </div>
+
+            {modal.type==="book" && (<>
+              {/* Date */}
+              <div style={{ marginBottom:10 }}>
                 <label style={S.lbl}>Date</label>
-                <input type="date" value={form.blockDate} min={todayStr()} onChange={e=>setForm(f=>({...f,blockDate:e.target.value}))} style={S.inp} />
-                {form.blockDate && (
-                  <div style={{ fontSize:11, color:"#e8c878", marginTop:4 }}>📅 {dayLabel(form.blockDate)||form.blockDate}
-                    {carSlots(modal.carId,form.blockDate).length>0 && (
-                      <span style={{ color:"#f5a623", marginLeft:8 }}>⚠️ {carSlots(modal.carId,form.blockDate).length} existing slot(s)</span>
-                    )}
-                  </div>
-                )}
+                <input type="date" value={fDate} min={todayStr()} onChange={e=>{ setFDate(e.target.value); setFStart(""); setFEnd(""); }} style={S.inp} />
+                {fDate && <div style={{ fontSize:10,color:"#e8c878",marginTop:4 }}>📅 {dayLabel(fDate)}</div>}
               </div>
-              {/* Show free slots for chosen date */}
-              {form.blockDate && getFreeSlots(carSlots(modal.carId,form.blockDate)).length>0 && (
-                <div style={{ marginBottom:12 }}>
-                  <label style={S.lbl}>Available Slots on This Day</label>
-                  <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                    {getFreeSlots(carSlots(modal.carId,form.blockDate)).map((f,i)=>(
-                      <button key={i} onClick={()=>setForm(ff=>({...ff,blockStart:f.from,blockEnd:f.to}))}
-                        style={{ background:form.blockStart===f.from?"rgba(0,200,150,0.2)":"rgba(0,200,150,0.06)", border:`1px solid ${form.blockStart===f.from?"#00c896":"rgba(0,200,150,0.3)"}`, borderRadius:8, padding:"5px 10px", color:"#00c896", fontSize:12, cursor:"pointer", fontWeight:600 }}>
-                        ✅ {f.from}–{f.to}
-                      </button>
-                    ))}
+
+              {/* Time slot dropdowns */}
+              {fDate && (()=>{
+                const existing = bookings.filter(b=>b.carId===modal.carId&&b.date===fDate&&b.status==="BLOCKED");
+                const freeHrs  = getFreeSlots(bookings, modal.carId, fDate);
+
+                // Valid start hours = free hours
+                const startOpts = HOURS.filter(h => freeHrs.includes(h) && h < 21);
+                // Valid end hours = free consecutive from selected start
+                let endOpts = [];
+                if (fStart) {
+                  let h = parseInt(fStart)+1;
+                  while (h <= 21) {
+                    const prevH = h-1;
+                    const conflict = existing.some(b => overlaps(parseInt(fStart), h, parseInt(b.startSlot), parseInt(b.endSlot)));
+                    if (conflict) break;
+                    endOpts.push(h);
+                    h++;
+                  }
+                }
+
+                return (
+                  <div style={{ marginBottom:10 }}>
+                    <label style={S.lbl}>Time Slot</label>
+                    {freeHrs.length===0
+                      ? <div style={{ fontSize:11,color:"#e74c3c",background:"rgba(231,76,60,0.08)",borderRadius:7,padding:"8px 10px",border:"1px solid rgba(231,76,60,0.2)" }}>🚫 No free slots on this date</div>
+                      : (
+                        <div style={{ display:"flex",gap:8,alignItems:"center" }}>
+                          <div style={{ flex:1 }}>
+                            <div style={{ fontSize:9,color:"#8892a4",marginBottom:4 }}>START</div>
+                            <select value={fStart} onChange={e=>{setFStart(e.target.value);setFEnd("");}} style={S.inp}>
+                              <option value="">Select…</option>
+                              {startOpts.map(h=><option key={h} value={String(h)}>{H(h)}</option>)}
+                            </select>
+                          </div>
+                          <div style={{ color:"#6b7a8d",fontSize:14,marginTop:12 }}>→</div>
+                          <div style={{ flex:1 }}>
+                            <div style={{ fontSize:9,color:"#8892a4",marginBottom:4 }}>END</div>
+                            <select value={fEnd} onChange={e=>setFEnd(e.target.value)} style={S.inp} disabled={!fStart}>
+                              <option value="">Select…</option>
+                              {endOpts.map(h=><option key={h} value={String(h)}>{H(h)}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                      )
+                    }
+                    {fStart&&fEnd&&<div style={{ fontSize:10,color:"#00c896",marginTop:5 }}>✅ Booking: {H(parseInt(fStart))} to {H(parseInt(fEnd))} ({parseInt(fEnd)-parseInt(fStart)} hr{parseInt(fEnd)-parseInt(fStart)>1?"s":""})</div>}
                   </div>
-                </div>
-              )}
-              <div style={{ marginBottom:12 }}>
-                <label style={S.lbl}>Time Slot</label>
-                <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                  <div style={{ flex:1 }}>
-                    <div style={{ fontSize:10, color:"#8892a4", marginBottom:4 }}>START</div>
-                    <input type="time" value={form.blockStart} onChange={e=>setForm(f=>({...f,blockStart:e.target.value}))} style={S.inp} />
-                  </div>
-                  <div style={{ color:"#6b7a8d", fontSize:16, marginTop:14 }}>→</div>
-                  <div style={{ flex:1 }}>
-                    <div style={{ fontSize:10, color:"#8892a4", marginBottom:4 }}>END</div>
-                    <input type="time" value={form.blockEnd} onChange={e=>setForm(f=>({...f,blockEnd:e.target.value}))} style={S.inp} />
-                  </div>
-                </div>
-                <div style={{ fontSize:11, color:"#6b7a8d", marginTop:5 }}>⏰ Auto-releases if not taken out by end time</div>
+                );
+              })()}
+
+              {/* Location */}
+              <div style={{ marginBottom:10 }}>
+                <label style={S.lbl}>Route / Location <span style={{ color:"#4a5568" }}>(optional)</span></label>
+                <input value={fLocation} onChange={e=>setFLoc(e.target.value)} placeholder="e.g. Gachibowli–HITEC City loop" style={S.inp} />
               </div>
-              <div style={{ marginBottom:12 }}>
+              <div style={{ marginBottom:14 }}>
                 <label style={S.lbl}>Notes <span style={{ color:"#4a5568" }}>(optional)</span></label>
-                <input value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="e.g. VIP customer, needs diesel demo" style={S.inp} />
-              </div>
-              <div style={{ marginBottom:16 }}>
-                <label style={S.lbl}>Test Drive Route / Location <span style={{ color:"#4a5568" }}>(optional)</span></label>
-                <div style={{ display:"flex", gap:8 }}>
-                  <input value={form.location} onChange={e=>setForm(f=>({...f,location:e.target.value}))} placeholder="e.g. Gachibowli–Hitech City loop" style={{ ...S.inp, flex:1 }} />
-                  <button onClick={()=>{
-                    if (!navigator.geolocation) return showToast("GPS not available","error");
-                    setForm(f=>({...f,locLoading:true}));
-                    navigator.geolocation.getCurrentPosition(
-                      pos => {
-                        const lat = pos.coords.latitude.toFixed(5);
-                        const lng = pos.coords.longitude.toFixed(5);
-                        fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`)
-                          .then(r=>r.json())
-                          .then(d=>{
-                            const addr = d.address;
-                            const label = [addr.road||addr.neighbourhood, addr.suburb||addr.city_district, addr.city||addr.town].filter(Boolean).join(", ");
-                            setForm(f=>({...f,location:label||`${lat},${lng}`,locLoading:false}));
-                          })
-                          .catch(()=>setForm(f=>({...f,location:`${lat},${lng}`,locLoading:false})));
-                      },
-                      ()=>{ showToast("Location denied","error"); setForm(f=>({...f,locLoading:false})); },
-                      {timeout:8000}
-                    );
-                  }} style={{ background:"rgba(99,179,237,0.15)", border:"1px solid rgba(99,179,237,0.35)", borderRadius:8, padding:"10px 12px", color:"#63b3ed", fontSize:12, cursor:"pointer", fontWeight:600, whiteSpace:"nowrap", flexShrink:0 }}>
-                    {form.locLoading ? "📍…" : "📍 GPS"}
-                  </button>
-                </div>
-                <div style={{ fontSize:11, color:"#6b7a8d", marginTop:5 }}>Type a route or tap GPS to auto-fill current location</div>
+                <input value={fNotes} onChange={e=>setFNotes(e.target.value)} placeholder="e.g. VIP customer" style={S.inp} />
               </div>
             </>)}
 
-            {(modal.action==="checkout"||modal.action==="checkout_from_block") && (
-              <div style={{ marginBottom:16 }}>
+            {/* Return time for checkout */}
+            {modal.type==="checkout" && (
+              <div style={{ marginBottom:14 }}>
                 <label style={S.lbl}>Expected Return Time</label>
-                <input type="time" value={form.expectedReturn} onChange={e=>setForm(f=>({...f,expectedReturn:e.target.value}))} style={S.inp} />
+                <select value={fReturn} onChange={e=>setFReturn(e.target.value)} style={S.inp}>
+                  <option value="">Select return time…</option>
+                  {HOURS.map(h=><option key={h} value={HH(h)}>{H(h)}</option>)}
+                </select>
               </div>
             )}
 
-            <div style={{ display:"flex", gap:10 }}>
-              <button onClick={()=>setModal(null)} style={{ flex:1, background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:10, padding:12, color:"#8892a4", fontSize:13, cursor:"pointer", fontWeight:600 }}>Cancel</button>
-              <button onClick={modal.action==="block"?handleBlock:handleCheckout} disabled={syncing} style={{ flex:2, background:modal.action==="block"?"linear-gradient(135deg,#f5a623,#e8941a)":gold, border:"none", borderRadius:10, padding:12, color:"#0a0e1a", fontSize:13, cursor:"pointer", fontWeight:700, opacity:syncing?0.6:1 }}>
-                {syncing?"Saving…":modal.action==="block"?"Confirm Booking":"Confirm Checkout"}
+            <div style={{ display:"flex",gap:8 }}>
+              <button onClick={()=>setModal(null)} style={{ flex:1,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:9,padding:11,color:"#8892a4",fontSize:12,cursor:"pointer",fontWeight:600 }}>Cancel</button>
+              <button onClick={modal.type==="book"?handleBook:handleCheckout} disabled={syncing} style={{ flex:2,background:modal.type==="book"?"linear-gradient(135deg,#f5a623,#e8941a)":gold,border:"none",borderRadius:9,padding:11,color:"#0a0e1a",fontSize:12,cursor:"pointer",fontWeight:700,opacity:syncing?0.6:1 }}>
+                {syncing?"Saving…":modal.type==="book"?"Confirm Booking":"Confirm Checkout"}
               </button>
             </div>
           </div>
@@ -706,7 +653,7 @@ export default function TestDriveApp() {
 
       {/* Toast */}
       {toast && (
-        <div style={{ position:"fixed", bottom:24, left:"50%", transform:"translateX(-50%)", background:toast.type==="error"?"#e74c3c":"#00c896", color:"#fff", padding:"10px 20px", borderRadius:20, fontSize:13, fontWeight:600, zIndex:300, boxShadow:"0 4px 20px rgba(0,0,0,0.4)", maxWidth:"90vw", textAlign:"center" }}>
+        <div style={{ position:"fixed",bottom:22,left:"50%",transform:"translateX(-50%)",background:toast.type==="err"?"#e74c3c":"#00c896",color:"#fff",padding:"9px 18px",borderRadius:18,fontSize:12,fontWeight:600,zIndex:300,boxShadow:"0 4px 20px rgba(0,0,0,0.4)",maxWidth:"90vw",textAlign:"center" }}>
           {toast.msg}
         </div>
       )}
