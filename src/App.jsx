@@ -153,13 +153,18 @@ export default function TestDriveApp() {
     return ()=>clearInterval(t);
   },[fetchData]);
 
-  // Auto-release expired blocks
+  // Auto-release expired blocks (only if blockEnd passed by more than 30 mins)
   useEffect(() => {
     bookings.forEach(b => {
-      if (b.status===STATUS.BLOCKED && isPastDateTime(b.blockDate, b.blockEnd)) {
-        const car = cars.find(c=>String(c.id)===String(b.carId));
-        apiPost({ action:"releaseCar", carId:b.carId, bookingId:b.bookingId, carName:car?.name, requestedBy:"AUTO", requesterRole:"admin", blockedBy:b.consultant, customer:b.customer, autoRelease:true })
-          .then(()=>fetchData());
+      if (b.status===STATUS.BLOCKED && b.blockDate && b.blockEnd) {
+        const endDt = new Date(`${b.blockDate}T${b.blockEnd}`);
+        const now   = new Date();
+        const minsExpired = (now - endDt) / 60000;
+        if (minsExpired > 30) {
+          const car = cars.find(c=>String(c.id)===String(b.carId));
+          apiPost({ action:"releaseCar", carId:b.carId, bookingId:b.bookingId, carName:car?.name, requestedBy:"AUTO", requesterRole:"admin", blockedBy:b.consultant, customer:b.customer, autoRelease:true })
+            .then(()=>fetchData());
+        }
       }
     });
   },[bookings]);
@@ -176,14 +181,30 @@ export default function TestDriveApp() {
     finally { setSyncing(false); }
   };
 
-  const getCar    = id => cars.find(c=>String(c.id)===String(id));
-  const carSlots  = (carId,date) => bookings.filter(b=>String(b.carId)===String(carId)&&b.blockDate===date&&b.status===STATUS.BLOCKED).sort((a,b)=>timeToMins(a.blockStart)-timeToMins(b.blockStart));
-  const carOut    = (carId) => bookings.find(b=>String(b.carId)===String(carId)&&b.status===STATUS.OUT);
+  // Normalize IDs for comparison — handles CAR001, 1, "1", etc.
+  const normId = v => String(v||"").trim().toLowerCase();
+
+  const getCar    = id => cars.find(c=>normId(c.id)===normId(id));
+
+  const carSlots  = (carId, date) => bookings.filter(b => {
+    return normId(b.carId) === normId(carId) &&
+           String(b.blockDate||"").trim() === String(date||"").trim() &&
+           String(b.status||"").trim() === STATUS.BLOCKED;
+  }).sort((a,b) => timeToMins(a.blockStart) - timeToMins(b.blockStart));
+
+  const carOut = (carId) => bookings.find(b =>
+    normId(b.carId) === normId(carId) &&
+    String(b.status||"").trim() === STATUS.OUT
+  );
 
   const getActiveStatus = (carId) => {
     const out = carOut(carId);
     if (out) return {...out, displayStatus:STATUS.OUT};
-    const todayB = bookings.find(b=>String(b.carId)===String(carId)&&b.status===STATUS.BLOCKED&&b.blockDate===todayStr());
+    const todayB = bookings.find(b =>
+      normId(b.carId) === normId(carId) &&
+      String(b.status||"").trim() === STATUS.BLOCKED &&
+      String(b.blockDate||"").trim() === todayStr()
+    );
     if (todayB) return {...todayB, displayStatus:STATUS.BLOCKED};
     return { displayStatus:STATUS.FREE };
   };
@@ -195,7 +216,11 @@ export default function TestDriveApp() {
     if (!form.blockStart||!form.blockEnd) return showToast("Set start & end time","error");
     if (form.blockStart>=form.blockEnd) return showToast("End must be after start","error");
     const existing = carSlots(modal.carId, form.blockDate);
-    const conflict = existing.find(b=>!(form.blockEnd<=b.blockStart||form.blockStart>=b.blockEnd));
+    const conflict = existing.find(b => {
+      const bStart = String(b.blockStart||"").trim();
+      const bEnd   = String(b.blockEnd||"").trim();
+      return !(form.blockEnd<=bStart || form.blockStart>=bEnd);
+    });
     if (conflict) return showToast(`Conflict: ${conflict.consultant} has ${conflict.blockStart}–${conflict.blockEnd}`,"error");
     const car = getCar(modal.carId);
     const ok = await doPost({ action:"blockCar", carId:modal.carId, carName:car?.name, consultant:form.consultant, customer:form.customer, phone:form.phone, notes:form.notes, location:form.location, blockDate:form.blockDate, blockStart:form.blockStart, blockEnd:form.blockEnd });
