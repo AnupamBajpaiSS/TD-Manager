@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-const API_URL = "https://script.google.com/macros/s/AKfycbzvDWys4SSetwBfhxQb1j0q0XGnMjbfop7ONX3wq46beAsIDxJ3A73M4iZYSI032OA/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbzddm3Yad0s-_oVMw-7cMjjz9RigO1v-VYyUYsxT0VhHw9XDLetQna1dsIk4Vuk8Go/exec";
 const STATUS = { FREE:"FREE", BLOCKED:"BLOCKED", OUT:"OUT" };
 const HOURS = Array.from({length:13},(_,i)=>`${(i+9).toString().padStart(2,"0")}:00`); // 09:00–21:00
 
