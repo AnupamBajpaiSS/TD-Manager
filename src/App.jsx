@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-const API_URL = "https://script.google.com/macros/s/AKfycbyEGck3zAtam3muyRwGoLwiK2zxT3mT3PG_ZpRNtbKRkWmV9DhrgYN5cW-ZbWVKM6Y/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbxTsOEcWEu6yZd52wYp0lawBB88YdTrS4pNUfobQJIsGzZndhpcFIuGpdMzkoXHuQ/exec";
 
 // Hours 9AM to 9PM
 const HOURS = [9,10,11,12,13,14,15,16,17,18,19,20,21];
