@@ -201,8 +201,10 @@ export default function App() {
   const handleBook = async () => {
     if (!fConsultant||!fCustomer) return showToast("Fill consultant & customer","err");
     if (!fDate) return showToast("Select a date","err");
-    if (!fStart||!fEnd) return showToast("Select start & end time","err");
+    if (!fStart) return showToast("Select start time","err");
+    if (!fEnd) return showToast("Select end time","err");
     if (parseInt(fEnd)<=parseInt(fStart)) return showToast("End must be after start","err");
+    if (isNaN(parseInt(fStart))||isNaN(parseInt(fEnd))) return showToast("Invalid time selection","err");
     const car = cars.find(c=>c.id===modal.carId);
     const ok = await post({action:"bookSlot", carId:modal.carId, carName:car?.name||modal.carName, consultant:fConsultant, customer:fCustomer, phone:fPhone, location:fLocation, notes:fNotes, date:fDate, startSlot:fStart, endSlot:fEnd});
     if (ok) { showToast(`Slot booked ✅`); setModal(null); }
@@ -565,7 +567,7 @@ export default function App() {
               {/* Date */}
               <div style={{ marginBottom:10 }}>
                 <label style={S.lbl}>Date</label>
-                <input type="date" value={fDate} min={todayStr()} onChange={e=>{ setFDate(e.target.value); setFStart(""); setFEnd(""); }} style={S.inp} />
+                <input type="date" value={fDate} min={todayStr()} onChange={e=>{ setFDate(e.target.value); setFStart(""); setFEnd(""); setSchedDate(e.target.value); }} style={S.inp} />
                 {fDate && <div style={{ fontSize:10,color:"#e8c878",marginTop:4 }}>📅 {dayLabel(fDate)}</div>}
               </div>
 
