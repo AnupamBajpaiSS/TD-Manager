@@ -205,8 +205,11 @@ export default function App() {
     if (!fEnd) return showToast("Select end time","err");
     if (parseInt(fEnd)<=parseInt(fStart)) return showToast("End must be after start","err");
     if (isNaN(parseInt(fStart))||isNaN(parseInt(fEnd))) return showToast("Invalid time selection","err");
+    // Show debug toast so we can verify values
+    showToast(`Booking: ${fDate} ${fStart}→${fEnd}`);
+    await new Promise(r=>setTimeout(r,1500));
     const car = cars.find(c=>c.id===modal.carId);
-    const ok = await post({action:"bookSlot", carId:modal.carId, carName:car?.name||modal.carName, consultant:fConsultant, customer:fCustomer, phone:fPhone, location:fLocation, notes:fNotes, date:fDate, startSlot:fStart, endSlot:fEnd});
+    const ok = await post({action:"bookSlot", carId:modal.carId, carName:car?.name||modal.carName, consultant:fConsultant, customer:fCustomer, phone:fPhone, location:fLocation, notes:fNotes, date:fDate, startSlot:String(fStart), endSlot:String(fEnd)});
     if (ok) { showToast(`Slot booked ✅`); setModal(null); }
   };
 
@@ -229,6 +232,22 @@ export default function App() {
     const ok = await post({action:"releaseSlot", bookingId:b.id, carName:car?.name||b.carName, requester:user.name, requesterRole:user.role, bookedBy:b.consultant, customer:b.customer});
     if (ok) showToast(`Slot released`);
   };
+
+  // Compute slot options at component level (not inside JSX IIFE)
+  const modalExisting = modal ? bookings.filter(b=>b.carId===modal.carId&&b.date===fDate&&b.status==="BLOCKED") : [];
+  const modalFreeHrs  = modal ? getFreeSlots(bookings, modal.carId, fDate) : [];
+  const modalStartOpts = modalFreeHrs.filter(h => h < 21);
+  let modalEndOpts = [];
+  if (fStart && modal) {
+    const startH = parseInt(fStart);
+    const nextBlock = modalExisting
+      .filter(b => parseInt(b.startSlot) > startH)
+      .map(b => parseInt(b.startSlot))
+      .sort((a,b)=>a-b)[0] || 22;
+    for (let h = startH+1; h <= Math.min(21, nextBlock); h++) {
+      modalEndOpts.push(h);
+    }
+  }
 
   if (loading) return (
     <div style={{ minHeight:"100vh", background:"#0a0e1a", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:14, color:"#8892a4" }}>
@@ -572,54 +591,34 @@ export default function App() {
               </div>
 
               {/* Time slot dropdowns */}
-              {fDate && (()=>{
-                const existing = bookings.filter(b=>b.carId===modal.carId&&b.date===fDate&&b.status==="BLOCKED");
-                const freeHrs  = getFreeSlots(bookings, modal.carId, fDate);
-
-                // Valid start hours = free hours
-                const startOpts = HOURS.filter(h => freeHrs.includes(h) && h < 21);
-                // Valid end hours = free consecutive from selected start
-                let endOpts = [];
-                if (fStart) {
-                  let h = parseInt(fStart)+1;
-                  while (h <= 21) {
-                    const prevH = h-1;
-                    const conflict = existing.some(b => overlaps(parseInt(fStart), h, parseInt(b.startSlot), parseInt(b.endSlot)));
-                    if (conflict) break;
-                    endOpts.push(h);
-                    h++;
-                  }
-                }
-
-                return (
-                  <div style={{ marginBottom:10 }}>
-                    <label style={S.lbl}>Time Slot</label>
-                    {freeHrs.length===0
-                      ? <div style={{ fontSize:11,color:"#e74c3c",background:"rgba(231,76,60,0.08)",borderRadius:7,padding:"8px 10px",border:"1px solid rgba(231,76,60,0.2)" }}>🚫 No free slots on this date</div>
-                      : (
-                        <div style={{ display:"flex",gap:8,alignItems:"center" }}>
-                          <div style={{ flex:1 }}>
-                            <div style={{ fontSize:9,color:"#8892a4",marginBottom:4 }}>START</div>
-                            <select value={fStart} onChange={e=>{setFStart(e.target.value);setFEnd("");}} style={S.inp}>
-                              <option value="">Select…</option>
-                              {startOpts.map(h=><option key={h} value={String(h)}>{H(h)}</option>)}
-                            </select>
-                          </div>
-                          <div style={{ color:"#6b7a8d",fontSize:14,marginTop:12 }}>→</div>
-                          <div style={{ flex:1 }}>
-                            <div style={{ fontSize:9,color:"#8892a4",marginBottom:4 }}>END</div>
-                            <select value={fEnd} onChange={e=>setFEnd(e.target.value)} style={S.inp} disabled={!fStart}>
-                              <option value="">Select…</option>
-                              {endOpts.map(h=><option key={h} value={String(h)}>{H(h)}</option>)}
-                            </select>
-                          </div>
+              {fDate && (
+                <div style={{ marginBottom:10 }}>
+                  <label style={S.lbl}>Time Slot</label>
+                  {modalFreeHrs.length===0
+                    ? <div style={{ fontSize:11,color:"#e74c3c",background:"rgba(231,76,60,0.08)",borderRadius:7,padding:"8px 10px",border:"1px solid rgba(231,76,60,0.2)" }}>🚫 No free slots on this date</div>
+                    : (
+                      <div style={{ display:"flex",gap:8,alignItems:"center" }}>
+                        <div style={{ flex:1 }}>
+                          <div style={{ fontSize:9,color:"#8892a4",marginBottom:4 }}>START</div>
+                          <select value={fStart} onChange={e=>{setFStart(e.target.value);setFEnd("");}} style={S.inp}>
+                            <option value="">Select…</option>
+                            {modalStartOpts.map(h=><option key={h} value={String(h)}>{H(h)}</option>)}
+                          </select>
                         </div>
-                      )
-                    }
-                    {fStart&&fEnd&&<div style={{ fontSize:10,color:"#00c896",marginTop:5 }}>✅ Booking: {H(parseInt(fStart))} to {H(parseInt(fEnd))} ({parseInt(fEnd)-parseInt(fStart)} hr{parseInt(fEnd)-parseInt(fStart)>1?"s":""})</div>}
-                  </div>
-                );
-              })()}
+                        <div style={{ color:"#6b7a8d",fontSize:14,marginTop:12 }}>→</div>
+                        <div style={{ flex:1 }}>
+                          <div style={{ fontSize:9,color:"#8892a4",marginBottom:4 }}>END</div>
+                          <select value={fEnd} onChange={e=>setFEnd(e.target.value)} style={S.inp} disabled={!fStart}>
+                            <option value="">Select…</option>
+                            {modalEndOpts.map(h=><option key={h} value={String(h)}>{H(h)}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                    )
+                  }
+                  {fStart&&fEnd&&<div style={{ fontSize:10,color:"#00c896",marginTop:5,fontWeight:600 }}>✅ {H(parseInt(fStart))} → {H(parseInt(fEnd))} · {parseInt(fEnd)-parseInt(fStart)} hr{parseInt(fEnd)-parseInt(fStart)>1?"s":""}</div>}
+                </div>
+              )
 
               {/* Location */}
               <div style={{ marginBottom:10 }}>
