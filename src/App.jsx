@@ -618,7 +618,7 @@ export default function App() {
                   }
                   {fStart&&fEnd&&<div style={{ fontSize:10,color:"#00c896",marginTop:5,fontWeight:600 }}>✅ {H(parseInt(fStart))} → {H(parseInt(fEnd))} · {parseInt(fEnd)-parseInt(fStart)} hr{parseInt(fEnd)-parseInt(fStart)>1?"s":""}</div>}
                 </div>
-              )
+              )}
 
               {/* Location */}
               <div style={{ marginBottom:10 }}>
